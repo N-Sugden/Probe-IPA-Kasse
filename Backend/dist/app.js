@@ -11,6 +11,7 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const authRoutes_1 = __importDefault(require("./routes/authRoutes"));
 const balanceRoutes_1 = __importDefault(require("./routes/balanceRoutes"));
 const historyRoutes_1 = __importDefault(require("./routes/historyRoutes"));
+const devRoutes_1 = __importDefault(require("./routes/devRoutes"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
@@ -38,6 +39,9 @@ passport_1.default.deserializeUser((user, done) => {
 app.use('/auth', authRoutes_1.default);
 app.use('/api/balance', balanceRoutes_1.default);
 app.use('/api/history', historyRoutes_1.default);
+if (process.env.NODE_ENV !== 'production') {
+    app.use('/dev', devRoutes_1.default);
+}
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
