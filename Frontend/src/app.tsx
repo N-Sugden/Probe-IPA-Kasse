@@ -1,43 +1,148 @@
 import React, { useState, useEffect } from 'react'
 import * as api from './services/api'
 import { log, LogLevel } from './utils/logger'
-
-type Role = 'MITARBEITER' | 'LERNENDER'
-type View = 'AUFLADUNG' | 'ABBUCHUNG' | 'GUTHABEN' | 'GESAMTUEBERSICHT' | 'VERLAUFE'
+import LoginPage from './pages/LoginPage'
+import { DepositForm } from './components/DepositForm'
+import { WithdrawForm } from './components/WithdrawForm'
+import { BalanceView } from './components/BalanceView'
+import { HistoryView } from './components/HistoryView'
+import { OverviewView } from './components/OverviewView'
+import { Role, View, User, Transaction, Message } from './types'
 
 const App: React.FC = () => {
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false)
   const [role, setRole] = useState<Role>('MITARBEITER')
   const [view, setView] = useState<View>('AUFLADUNG')
+  const [users, setUsers] = useState<User[]>([])
   const [userId, setUserId] = useState<number>(3)
   const [balanceValue, setBalanceValue] = useState<number | null>(null)
-  const [message, setMessage] = useState<{type:'info'|'error', text:string} | null>(null)
-  const [allBalances, setAllBalances] = useState<any[]>([])
-  const [history, setHistory] = useState<any[]>([])
+  const [message, setMessage] = useState<Message | null>(null)
+  const [allBalances, setAllBalances] = useState<User[]>([])
+  const [history, setHistory] = useState<Transaction[]>([])
 
-  // simple user lists matching mockData
-  const mitarbeiter = [ { id: 3, name: 'Anna Admin' }, { id: 6, name: 'Karl Weber' }, { id: 8, name: 'Thomas Lang' } ]
-  const lernende = [ { id:1, name:'Max Muster' }, { id:2, name:'Lisa Schmidt' }, { id:4, name:'Peter Meier' }, { id:5, name:'Julia Bauer' }, { id:7, name:'Sophie Huber' }, { id:9, name:'Maria Keller' }, { id:10, name:'Daniel Frei' } ]
-
+  // Check if already logged in on mount
   useEffect(() => {
-    // when user changes, request a dev token and store it
+    const loggedIn = localStorage.getItem('isLoggedIn')
+    if (loggedIn === 'true') {
+      setIsLoggedIn(true)
+    }
+  }, [])
+
+  // Fetch users on mount
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const res = await fetch('http://localhost:3000/dev/users')
+        const data = await res.json()
+        setUsers([...(data.mitarbeiter || []), ...(data.lernende || [])])
+        log(LogLevel.INFO, 'Users loaded from backend')
+      } catch (e: any) {
+        log(LogLevel.ERROR, 'Failed to load users: ' + e.message)
+        setMessage({ type: 'error', text: 'Benutzer konnte nicht geladen werden' })
+      }
+    }
+    fetchUsers()
+  }, [])
+
+  // Get users for current role
+  const usersForRole = users.filter(u => u.role === role)
+
+  // Reset view if not valid for current role, clear history on role change
+  useEffect(() => {
+    const validViews: View[] = role === 'MITARBEITER'
+      ? ['AUFLADUNG','ABBUCHUNG','GUTHABEN','GESAMTUEBERSICHT','VERLAUFE']
+      : ['AUFLADUNG','ABBUCHUNG','GUTHABEN']
+    
+    if (!validViews.includes(view)) {
+      setView('AUFLADUNG')
+    }
+    setHistory([])
+    setBalanceValue(null)
+  }, [role])
+
+  // Set initial user and clear history when role changes
+  useEffect(() => {
+    if (usersForRole.length > 0 && !usersForRole.find(u => u.id === userId)) {
+      setUserId(usersForRole[0].id)
+    }
+    setHistory([])
+  }, [role, usersForRole])
+
+  // Clear history and balance when userId changes
+  useEffect(() => {
+    setHistory([])
+    setBalanceValue(null)
+  }, [userId])
+
+  // Auto-load data when view changes
+  useEffect(() => {
+    const loadViewData = async () => {
+      if (view === 'GUTHABEN') {
+        try {
+          const b = await api.getBalance()
+          setBalanceValue(Number(b.balance))
+          const h = await api.getMyHistory()
+          setHistory(h.history || [])
+          log(LogLevel.INFO, 'Balance and history loaded')
+        } catch (e: any) {
+          log(LogLevel.ERROR, 'Failed to load balance: ' + e.message)
+        }
+      } else if (view === 'GESAMTUEBERSICHT') {
+        try {
+          const res = await api.getAllBalances()
+          setAllBalances(res.balances || [])
+          log(LogLevel.INFO, 'All balances loaded')
+        } catch (e: any) {
+          log(LogLevel.ERROR, 'Failed to load balances: ' + e.message)
+        }
+      } else if (view === 'VERLAUFE') {
+        try {
+          const res = await api.getAllHistory()
+          setHistory(res.history || [])
+          log(LogLevel.INFO, 'All history loaded')
+        } catch (e: any) {
+          log(LogLevel.ERROR, 'Failed to load history: ' + e.message)
+        }
+      }
+    }
+    loadViewData()
+  }, [view])
+
+  // Fetch token when userId changes
+  useEffect(() => {
     const getToken = async () => {
       try {
-        const res = await fetch('http://localhost:3000/dev/token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) })
+        const res = await fetch('http://localhost:3000/dev/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId })
+        })
         const data = await res.json()
         if (data.token) {
           localStorage.setItem('dev_token', data.token)
-          setMessage('Token gesetzt für Benutzer ' + userId)
+          const user = users.find(u => u.id === userId)
+          setMessage({
+            type: 'info',
+            text: `Token für ${user?.first_name} ${user?.last_name} gesetzt`
+          })
+          log(LogLevel.INFO, `Token set for user ${userId}`)
         }
-      } catch (e) {
-        setMessage('Fehler beim Abrufen des Tokens')
+      } catch (e: any) {
+        log(LogLevel.ERROR, 'Token fetch failed: ' + e.message)
+        setMessage({ type: 'error', text: 'Token konnte nicht abgerufen werden' })
       }
     }
-    getToken()
+    if (userId) getToken()
   }, [userId])
 
   const buttonsForRole: View[] = role === 'MITARBEITER'
     ? ['AUFLADUNG','ABBUCHUNG','GUTHABEN','GESAMTUEBERSICHT','VERLAUFE']
     : ['AUFLADUNG','ABBUCHUNG','GUTHABEN']
+
+  // Show login page if not logged in
+  if (!isLoggedIn) {
+    return <LoginPage onLogin={() => { setIsLoggedIn(true); localStorage.setItem('isLoggedIn', 'true') }} />
+  }
 
   return (
     <div className="app">
@@ -48,7 +153,7 @@ const App: React.FC = () => {
             <option value="MITARBEITER">Mitarbeiter</option>
             <option value="LERNENDER">Lernender</option>
           </select>
-          <button className="btn logout">Logout</button>
+          <button className="btn logout" onClick={() => { setIsLoggedIn(false); localStorage.setItem('isLoggedIn', 'false'); setHistory([]); setBalanceValue(null); setAllBalances([]) }}>Logout</button>
         </div>
       </header>
 
@@ -64,14 +169,13 @@ const App: React.FC = () => {
         ))}
       </nav>
 
-      <div style={{padding:12,display:'flex',gap:12,alignItems:'center'}}>
+      <div style={{padding:12,display:'flex',gap:12,alignItems:'center',borderBottom:'1px solid #eee'}}>
         <label>Benutzer:</label>
         <select value={userId} onChange={e => setUserId(Number(e.target.value))}>
-          {(role==='MITARBEITER' ? mitarbeiter : lernende).map(u => (
-            <option key={u.id} value={u.id}>{u.name} (#{u.id})</option>
+          {usersForRole.map(u => (
+            <option key={u.id} value={u.id}>{u.first_name} {u.last_name} (#{u.id})</option>
           ))}
         </select>
-        <div style={{color:'#666'}}>{message?.text}</div>
       </div>
 
       {message && (
@@ -84,47 +188,47 @@ const App: React.FC = () => {
         {view === 'AUFLADUNG' && (
           <div className="panel">
             <h3>Aufladen</h3>
-            <DepositForm onDone={async () => { try { const b = await api.getBalance(); setBalanceValue(b.balance); setMessage({type:'info', text:'Aufgeladen'}); log(LogLevel.INFO, 'Deposit succeeded') } catch (e:any) { setMessage({type:'error', text: e.message}); log(LogLevel.ERROR, e.message) } }} />
+            <DepositForm onDone={async () => { 
+              try { 
+                const b = await api.getBalance()
+                setBalanceValue(Number(b.balance))
+                setMessage({type:'info', text:'Aufgeladen ✓'})
+                log(LogLevel.INFO, 'Deposit succeeded') 
+              } catch (e:any) { 
+                setMessage({type:'error', text: e.message})
+                log(LogLevel.ERROR, e.message) 
+              } 
+            }} />
           </div>
         )}
 
         {view === 'ABBUCHUNG' && (
           <div className="panel">
             <h3>Abbuchen</h3>
-            <WithdrawForm onDone={async () => { try { const b = await api.getBalance(); setBalanceValue(b.balance); setMessage({type:'info', text:'Abgebucht'}); log(LogLevel.INFO, 'Withdraw succeeded') } catch (e:any) { setMessage({type:'error', text: e.message}); log(LogLevel.ERROR, e.message) } }} />
+            <WithdrawForm onDone={async () => { 
+              try { 
+                const b = await api.getBalance()
+                setBalanceValue(Number(b.balance))
+                setMessage({type:'info', text:'Abgebucht ✓'})
+                log(LogLevel.INFO, 'Withdraw succeeded') 
+              } catch (e:any) { 
+                setMessage({type:'error', text: e.message})
+                log(LogLevel.ERROR, e.message) 
+              } 
+            }} />
           </div>
         )}
 
         {view === 'GUTHABEN' && (
-          <div className="panel">
-            <h3>Guthaben</h3>
-            <button className="btn" onClick={async () => { try { const b = await api.getBalance(); setBalanceValue(b.balance); setMessage(null); log(LogLevel.INFO, 'Balance fetched') } catch (e:any) { setMessage({type:'error', text: e.message}); log(LogLevel.ERROR, e.message) } }}>Aktualisieren</button>
-            <div style={{marginTop:12}}>Aktuelles Guthaben: {balanceValue !== null ? balanceValue.toFixed(2) + ' CHF' : '—'}</div>
-            <div style={{marginTop:12}}>
-              <button className="btn" onClick={async () => { try { const h = await api.getMyHistory(); setHistory(h.history || []); setMessage(null); log(LogLevel.INFO, 'My history loaded') } catch (e:any) { setMessage({type:'error', text: e.message}); log(LogLevel.ERROR, e.message) } }}>Meine Historie laden</button>
-              {history.length>0 && <ul>{history.map((it,idx)=>(<li key={idx}>{it.type} {it.amount} CHF — {new Date(it.created_at).toLocaleString()}</li>))}</ul>}
-            </div>
-          </div>
+          <BalanceView balanceValue={balanceValue} history={history} />
         )}
 
         {view === 'GESAMTUEBERSICHT' && (
-          <div className="panel">
-            <h3>Gesamtübersicht</h3>
-            <button className="btn" onClick={async ()=>{ try { const res = await api.getAllBalances(); setAllBalances(res.balances || []); setMessage(null); log(LogLevel.INFO, 'All balances loaded') } catch (e:any) { setMessage({type:'error', text: e.message}); log(LogLevel.ERROR, e.message) } }}>Laden</button>
-            <ul>
-              {allBalances.map((u:any)=> (<li key={u.id}>{u.first_name} {u.last_name}: {Number(u.balance).toFixed(2)} CHF</li>))}
-            </ul>
-          </div>
+          <OverviewView allBalances={allBalances} />
         )}
 
         {view === 'VERLAUFE' && (
-          <div className="panel">
-            <h3>Guthabenverläufe</h3>
-            <button className="btn" onClick={async ()=>{ try { const res = await api.getAllHistory(); setHistory(res.history || []); setMessage(null); log(LogLevel.INFO, 'All history loaded') } catch (e:any) { setMessage({type:'error', text: e.message}); log(LogLevel.ERROR, e.message) } }}>Alle Verläufe laden</button>
-            <ul>
-              {history.map((it:any,idx)=>(<li key={idx}>User #{it.user_id} {it.type} {it.amount} CHF — {new Date(it.created_at).toLocaleString()}</li>))}
-            </ul>
-          </div>
+          <HistoryView history={history} users={users} />
         )}
       </main>
     </div>
@@ -132,26 +236,3 @@ const App: React.FC = () => {
 }
 
 export default App
-
-// small inline components for forms
-function DepositForm({ onDone }: { onDone?: ()=>void }){
-  const [amount, setAmount] = useState<number>(0)
-  const [busy, setBusy] = useState(false)
-  return (
-    <div>
-      <input type="number" value={amount} onChange={e=>setAmount(Number(e.target.value))} />
-      <button className="btn" onClick={async ()=>{ setBusy(true); try { await api.deposit(amount); onDone && await onDone() } catch (e:any) { console.error(e); alert('Fehler: '+e.message) } finally { setBusy(false) } }} disabled={busy}>Aufladen</button>
-    </div>
-  )
-}
-
-function WithdrawForm({ onDone }: { onDone?: ()=>void }){
-  const [amount, setAmount] = useState<number>(0)
-  const [busy, setBusy] = useState(false)
-  return (
-    <div>
-      <input type="number" value={amount} onChange={e=>setAmount(Number(e.target.value))} />
-      <button className="btn" onClick={async ()=>{ setBusy(true); try { await api.withdraw(amount); onDone && await onDone() } catch (e:any) { console.error(e); alert('Fehler: '+e.message) } finally { setBusy(false) } }} disabled={busy}>Abbuchen</button>
-    </div>
-  )
-}

@@ -19,4 +19,13 @@ router.post('/token', async (req, res) => {
   res.json({ token });
 });
 
+// Dev-only: get all users grouped by role
+router.get('/users', async (req, res) => {
+  if (process.env.NODE_ENV === 'production') return res.status(404).end();
+  const users = await userRepo.getAll();
+  const mitarbeiter = users.filter(u => u.role === 'MITARBEITER');
+  const lernende = users.filter(u => u.role === 'LERNENDER');
+  res.json({ mitarbeiter, lernende });
+});
+
 export default router;
