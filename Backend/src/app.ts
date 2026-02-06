@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/authRoutes';
 import balanceRoutes from './routes/balanceRoutes';
 import historyRoutes from './routes/historyRoutes';
+import devRoutes from './routes/devRoutes';
 
 dotenv.config();
 
@@ -40,6 +41,9 @@ passport.deserializeUser((user: any, done) => {
 app.use('/auth', authRoutes);
 app.use('/api/balance', balanceRoutes);
 app.use('/api/history', historyRoutes);
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/dev', devRoutes);
+}
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
